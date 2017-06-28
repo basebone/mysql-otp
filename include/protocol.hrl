@@ -127,3 +127,20 @@
 -define(TYPE_VAR_STRING, 16#fd).
 -define(TYPE_STRING, 16#fe).
 -define(TYPE_GEOMETRY, 16#ff).
+
+%% --- Flags ---
+-define(FLAG_NOT_NULL, 1).
+-define(FLAG_PRI_KEY, 2).
+-define(FLAG_UNIQUE_KEY, 4).
+-define(FLAG_MULT_KEY, 8).
+-define(FLAG_BLOB, 16).
+-define(FLAG_UNSIGNED, 32).
+-define(FLAG_ZEROFILL, 64).
+-define(FLAG_BINARY, 128).
+-define(FLAG_ENUM, 256).
+-define(FLAG_AUTO_INCREMENT, 512).
+-define(FLAG_TIMESTAMP, 1024).
+-define(FLAG_SET, 2048).
+-define(FLAG_NO_DEFAULT_VALUE, 4096).
+-define(FLAG_PART_KEY, 16384).
+-define(FLAG_NUM, 32768).

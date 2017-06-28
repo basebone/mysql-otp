@@ -615,14 +615,27 @@ decode_binary(#col{type = T}, Data)
     %% As of MySQL 5.6.21 we receive SET and ENUM values as STRING, i.e. we
     %% cannot convert them to atom() or sets:set(), etc.
     lenenc_str(Data);
+decode_binary(#col{type = ?TYPE_LONGLONG, flags = F}, 
+              <<Value:64/unsigned-little, Rest/binary>>) 
+  when F band ?FLAG_UNSIGNED =:= ?FLAG_UNSIGNED ->
+    {Value, Rest};
 decode_binary(#col{type = ?TYPE_LONGLONG},
               <<Value:64/signed-little, Rest/binary>>) ->
+    {Value, Rest};
+decode_binary(#col{type = T, flags = F}, <<Value:32/unsigned-little, Rest/binary>>)
+  when F band ?FLAG_UNSIGNED =:= ?FLAG_UNSIGNED, T == ?TYPE_LONG; F band ?FLAG_UNSIGNED =:= ?FLAG_UNSIGNED, T == ?TYPE_INT24 ->
     {Value, Rest};
 decode_binary(#col{type = T}, <<Value:32/signed-little, Rest/binary>>)
   when T == ?TYPE_LONG; T == ?TYPE_INT24 ->
     {Value, Rest};
+decode_binary(#col{type = T, flags = F}, <<Value:16/unsigned-little, Rest/binary>>)
+  when F band ?FLAG_UNSIGNED =:= ?FLAG_UNSIGNED, T == ?TYPE_SHORT; F band ?FLAG_UNSIGNED =:= ?FLAG_UNSIGNED, T == ?TYPE_YEAR ->
+    {Value, Rest};
 decode_binary(#col{type = T}, <<Value:16/signed-little, Rest/binary>>)
   when T == ?TYPE_SHORT; T == ?TYPE_YEAR ->
+    {Value, Rest};
+decode_binary(#col{type = ?TYPE_TINY, flags = F}, <<Value:8/unsigned, Rest/binary>>) 
+  when F band ?FLAG_UNSIGNED =:= ?FLAG_UNSIGNED ->
     {Value, Rest};
 decode_binary(#col{type = ?TYPE_TINY}, <<Value:8/signed, Rest/binary>>) ->
     {Value, Rest};
