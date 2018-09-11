@@ -1,5 +1,5 @@
 %% MySQL/OTP – MySQL client library for Erlang/OTP
-%% Copyright (C) 2014-2018 Viktor Söderqvist
+%% Copyright (C) 2017 Piotr Nosek, Michal Slaski
 %%
 %% This file is part of MySQL/OTP.
 %%
@@ -16,10 +16,27 @@
 %% You should have received a copy of the GNU Lesser General Public License
 %% along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-{application, mysql, [
-    {description, "MySQL/OTP - Erlang MySQL client driver"},
-    {vsn, "1.3.2"},
-    {modules, []},
-    {registered, []},
-    {applications, []}
-]}.
+%% @doc This module provides TCP socket interface, i.e. is a proxy to gen_tcp and inet.
+%% @private
+-module(mysql_sock_tcp).
+
+-export([connect/3, close/1, send/2, recv/2, recv/3]).
+-export([setopts/2]).
+
+connect(Host, Port, SockOpts) ->
+    gen_tcp:connect(Host, Port, SockOpts).
+
+close(Socket) ->
+    gen_tcp:close(Socket).
+
+send(Socket, Packet) ->
+    gen_tcp:send(Socket, Packet).
+
+recv(Socket, Length) ->
+    gen_tcp:recv(Socket, Length).
+
+recv(Socket, Length, Timeout) ->
+    gen_tcp:recv(Socket, Length, Timeout).
+
+setopts(Socket, SockOpts) ->
+    inet:setopts(Socket, SockOpts).

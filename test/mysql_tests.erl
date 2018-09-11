@@ -1,5 +1,6 @@
 %% MySQL/OTP – MySQL client library for Erlang/OTP
 %% Copyright (C) 2014-2016 Viktor Söderqvist
+%%               2017 Piotr Nosek
 %%
 %% This file is part of MySQL/OTP.
 %%
@@ -21,8 +22,10 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(user,     "otptest").
--define(password, "otptest").
+-define(user,         "otptest").
+-define(password,     "otptest").
+-define(ssl_user,     "otptestssl").
+-define(ssl_password, "otptestssl").
 
 %% We need to set a the SQL mode so it is consistent across MySQL versions
 %% and distributions.
@@ -49,26 +52,42 @@ failing_connect_test() ->
     receive
         {'EXIT', _Pid, {1045, <<"28000">>, <<"Access denie", _/binary>>}} -> ok
     after 1000 ->
-        ?assertEqual(ok, no_exit_message)
+        error(no_exit_message)
     end,
     process_flag(trap_exit, false).
 
 successful_connect_test() ->
     %% A connection with a registered name and execute initial queries and
     %% create prepared statements.
-    Options = [{name, {local, tardis}}, {user, ?user}, {password, ?password},
-               {queries, ["SET @foo = 'bar'", "SELECT 1",
-                          "SELECT 1; SELECT 2"]},
-               {prepare, [{foo, "SELECT @foo"}]}],
-    {ok, Pid} = mysql:start_link(Options),
-    %% Check that queries and prepare has been done.
-    ?assertEqual({ok, [<<"@foo">>], [[<<"bar">>]]},
-                 mysql:execute(Pid, foo, [])),
+    Pid = common_basic_check([{user, ?user}, {password, ?password}]),
+
     %% Test some gen_server callbacks not tested elsewhere
     State = get_state(Pid),
     ?assertMatch({ok, State}, mysql:code_change("0.1.0", State, [])),
     ?assertMatch({error, _}, mysql:code_change("2.0.0", unknown_state, [])),
-    exit(whereis(tardis), normal).
+    common_conn_close().
+
+common_basic_check(ExtraOpts) ->
+    Options = [{name, {local, tardis}},
+               {queries, ["SET @foo = 'bar'", "SELECT 1",
+                          "SELECT 1; SELECT 2"]},
+               {prepare, [{foo, "SELECT @foo"}]} | ExtraOpts],
+    {ok, Pid} = mysql:start_link(Options),
+    %% Check that queries and prepare has been done.
+    ?assertEqual({ok, [<<"@foo">>], [[<<"bar">>]]},
+                 mysql:execute(Pid, foo, [])),
+    Pid.
+
+common_conn_close() ->
+    Pid = whereis(tardis),
+    process_flag(trap_exit, true),
+    exit(Pid, normal),
+    receive
+        {'EXIT', Pid, normal} -> ok
+    after
+        5000 -> error({cant_stop_connection, Pid})
+    end,
+    process_flag(trap_exit, false).
 
 server_disconnect_test() ->
     process_flag(trap_exit, true),
@@ -102,7 +121,7 @@ tcp_error_test() ->
         receive
             {'EXIT', Pid, {tcp_error, tcp_reason}} -> ok
         after 1000 ->
-            ?assertEqual(ok, no_exit_message)
+            error(no_exit_message)
         end
     end),
     process_flag(trap_exit, false),
@@ -440,18 +459,44 @@ int(Pid) ->
     write_read_text_binary(Pid, 127, <<"1000">>, <<"tint">>, <<"i">>),
     write_read_text_binary(Pid, -128, <<"-1000">>, <<"tint">>, <<"i">>),
     ok = mysql:query(Pid, "DROP TABLE tint"),
+    %% TINYINT UNSIGNED
+    ok = mysql:query(Pid, "CREATE TABLE tuint (i TINYINT UNSIGNED)"),
+    write_read_text_binary(Pid, 240, <<"240">>, <<"tuint">>, <<"i">>),
+    ok = mysql:query(Pid, "DROP TABLE tuint"),
     %% SMALLINT
     ok = mysql:query(Pid, "CREATE TABLE sint (i SMALLINT)"),
     write_read_text_binary(Pid, 32000, <<"32000">>, <<"sint">>, <<"i">>),
     write_read_text_binary(Pid, -32000, <<"-32000">>, <<"sint">>, <<"i">>),
     ok = mysql:query(Pid, "DROP TABLE sint"),
+    %% SMALLINT UNSIGNED
+    ok = mysql:query(Pid, "CREATE TABLE suint (i SMALLINT UNSIGNED)"),
+    write_read_text_binary(Pid, 64000, <<"64000">>, <<"suint">>, <<"i">>),
+    ok = mysql:query(Pid, "DROP TABLE suint"),
+    %% MEDIUMINT
+    ok = mysql:query(Pid, "CREATE TABLE mint (i MEDIUMINT)"),
+    write_read_text_binary(Pid, 8388000, <<"8388000">>,
+                           <<"mint">>, <<"i">>),
+    write_read_text_binary(Pid, -8388000, <<"-8388000">>,
+                           <<"mint">>, <<"i">>),
+    ok = mysql:query(Pid, "DROP TABLE mint"),
+    %% MEDIUMINT UNSIGNED
+    ok = mysql:query(Pid, "CREATE TABLE muint (i MEDIUMINT UNSIGNED)"),
+    write_read_text_binary(Pid, 16777000, <<"16777000">>,
+                           <<"muint">>, <<"i">>),
+    ok = mysql:query(Pid, "DROP TABLE muint"),
     %% BIGINT
     ok = mysql:query(Pid, "CREATE TABLE bint (i BIGINT)"),
     write_read_text_binary(Pid, 123456789012, <<"123456789012">>,
                            <<"bint">>, <<"i">>),
     write_read_text_binary(Pid, -123456789012, <<"-123456789012">>,
                            <<"bint">>, <<"i">>),
-    ok = mysql:query(Pid, "DROP TABLE bint").
+    ok = mysql:query(Pid, "DROP TABLE bint"),
+    %% BIGINT UNSIGNED
+    ok = mysql:query(Pid, "CREATE TABLE buint (i BIGINT UNSIGNED)"),
+    write_read_text_binary(Pid, 18446744073709551000,
+                           <<"18446744073709551000">>,
+                           <<"buint">>, <<"i">>),
+    ok = mysql:query(Pid, "DROP TABLE buint").
 
 %% The BIT(N) datatype in MySQL 5.0.3 and later: the equivallent to bitstring()
 bit(Pid) ->
@@ -511,15 +556,20 @@ datetime(Pid) ->
 json(Pid) ->
     Version = db_version_string(Pid),
     try
+        is_mariadb(Version) andalso throw(no_mariadb),
         Version1 = parse_db_version(Version),
-        Version1 >= [5, 7, 8] orelse throw(nope)
+        Version1 >= [5, 7, 8] orelse throw(version_too_small)
     of _ ->
         test_valid_json(Pid),
         test_invalid_json(Pid)
-    catch _:_ ->
-        error_logger:info_msg("Skipping JSON test. Current MySQL"
-                              " version is ~s. Required version is >= 5.7.8.~n",
-                              [Version])
+    catch
+        throw:no_mariadb ->
+            error_logger:info_msg("Skipping JSON test, not supported on"
+                                  " MariaDB.~n");
+        throw:version_too_small ->
+            error_logger:info_msg("Skipping JSON test. Current MySQL version"
+                                  " is ~s. Required version is >= 5.7.8.~n",
+                                  [Version])
     end.
 
 test_valid_json(Pid) ->
@@ -701,6 +751,9 @@ gen_server_coverage_test() ->
 db_version_string(Pid) ->
   {ok, _, [[Version]]} = mysql:query(Pid, <<"SELECT @@version">>),
   Version.
+
+is_mariadb(Version) ->
+    binary:match(Version, <<"MariaDB">>) =/= nomatch.
 
 parse_db_version(Version) ->
   %% Remove stuff after dash for e.g. "5.5.40-0ubuntu0.12.04.1-log"
