@@ -1,5 +1,6 @@
 %% MySQL/OTP – MySQL client library for Erlang/OTP
-%% Copyright (C) 2017 Piotr Nosek, Viktor Söderqvist
+%% Copyright (C) 2017 Piotr Nosek
+%% Copyright (C) 2017-2018 Viktor Söderqvist
 %%
 %% This file is part of MySQL/OTP.
 %%
@@ -27,7 +28,8 @@
 
 successful_ssl_connect_test() ->
     [ application:start(App) || App <- [crypto, asn1, public_key, ssl] ],
-    common_basic_check([{ssl, [{cacertfile, ?cacertfile}]},
+    common_basic_check([{ssl, [{server_name_indication, disable},
+                               {cacertfile, ?cacertfile}]},
                         {user, ?ssl_user}, {password, ?ssl_password}]),
     common_conn_close(),
     ok.
@@ -45,12 +47,4 @@ common_basic_check(ExtraOpts) ->
 
 common_conn_close() ->
     Pid = whereis(tardis),
-    process_flag(trap_exit, true),
-    exit(Pid, normal),
-    receive
-        {'EXIT', Pid, normal} -> ok
-    after
-        5000 -> error({cant_stop_connection, Pid})
-    end,
-    process_flag(trap_exit, false).
-
+    mysql:stop(Pid, 5000).

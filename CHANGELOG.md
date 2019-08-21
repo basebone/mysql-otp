@@ -2,6 +2,48 @@ Change log
 ==========
 
 
+1.5.0
+-----
+* Parameter validation for prepared statements and parameterized queries [2019-03-31 18:24:59 +0200]
+* Synchronous stop [2019-03-31 18:24:59 +0200]
+* Workaround for sub binary optimization bug in OTP 21.0 [2019-03-31 18:24:59 +0200]
+* replace atom() with module() for SockModule parameters [2019-03-31 18:24:59 +0200]
+* implement COM_CHANGE_USER (#105) [2019-03-31 18:24:59 +0200]
+* Possibility to apply a filtermap fun on results (#104) [2019-03-31 18:24:59 +0200]
+* Update version and CHANGELOG.md [2019-03-31 18:24:59 +0200]
+* Get rid of socket wrapper modules [2019-03-31 18:24:59 +0200]
+* Remove redundant transaction level info in state [2019-03-31 18:24:59 +0200]
+* Remove superfluos 'Too many connections' test [2019-03-31 18:24:59 +0200]
+* Move gen_server to separate module [2019-03-31 18:24:59 +0200]
+* Handle error packet as the initial packet from the server [2019-03-31 18:24:59 +0200]
+* Clarifications for usage with MySQL 8 [2019-03-31 18:24:22 +0200]
+* Monitor calling process during transaction [2019-03-31 18:24:03 +0200]
+
+1.4.0
+-----
+* Update version and CHANGELOG.md [2019-01-11 23:15:48 +0100]
+* Get rid of socket wrapper modules [2018-12-03 01:07:39 +0100]
+* Remove redundant transaction level info in state [2018-12-02 22:39:36 +0100]
+* Remove superfluos 'Too many connections' test [2018-12-02 20:53:07 +0100]
+* Move gen_server to separate module [2018-12-02 20:46:33 +0100]
+* Handle error packet as the initial packet from the server [2018-12-02 18:35:45 +0100]
+* Clarifications for usage with MySQL 8 [2018-12-02 15:31:25 +0100]
+* Monitor calling process during transaction [2018-11-29 18:22:30 +0100]
+* Run tests with verbose output by default [2018-11-27 20:58:15 +0100]
+* fix spec for host option [2018-11-27 18:25:44 +0100]
+* Mention exit(Pid, normal) in README and a test [2018-11-21 00:59:25 +0100]
+* Return an error on deadlock if all retries fail in a transaction [2018-10-07 20:35:39 +0200]
+* Set gen_server-timeouts for transaction statements to infinity (#91) [2018-10-06 21:39:14 +0200]
+
+1.3.3
+-----
+* Compatibility with OTP 21.1 (#84) [2018-10-02 18:23:43 +0200]
+* Don't restart transaction on lock wait timeout (#89) [2018-09-18 11:10:57 +0200]
+* Make the Travis CI status show the master branch [2018-07-01 00:33:10 +0200]
+* Update README.md [2018-04-13 04:33:52 +0200]
+* Fixed a Typo in the doc [2018-03-21 11:13:26 +0100]
+* Update CHANGELOG.md [2018-03-20 02:44:37 +0100]
+
 1.3.2
 -----
 * Rewrite add_packet_headers and update version [2018-03-20 02:42:43 +0100]

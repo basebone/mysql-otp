@@ -29,7 +29,7 @@
 
 %% We need to set a the SQL mode so it is consistent across MySQL versions
 %% and distributions.
--define(SQL_MODE, <<"NO_ENGINE_SUBSTITUTION,NO_AUTO_CREATE_USER">>).
+-define(SQL_MODE, <<"NO_ENGINE_SUBSTITUTION">>).
 
 -define(create_table_t, <<"CREATE TABLE t ("
                           "  id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,"
@@ -63,8 +63,8 @@ successful_connect_test() ->
 
     %% Test some gen_server callbacks not tested elsewhere
     State = get_state(Pid),
-    ?assertMatch({ok, State}, mysql:code_change("0.1.0", State, [])),
-    ?assertMatch({error, _}, mysql:code_change("2.0.0", unknown_state, [])),
+    ?assertMatch({ok, State}, mysql_conn:code_change("0.1.0", State, [])),
+    ?assertMatch({error, _}, mysql_conn:code_change("2.0.0", unknown_state, [])),
     common_conn_close().
 
 common_basic_check(ExtraOpts) ->
@@ -81,13 +81,28 @@ common_basic_check(ExtraOpts) ->
 common_conn_close() ->
     Pid = whereis(tardis),
     process_flag(trap_exit, true),
-    exit(Pid, normal),
+    mysql:stop(Pid),
     receive
         {'EXIT', Pid, normal} -> ok
     after
         5000 -> error({cant_stop_connection, Pid})
     end,
     process_flag(trap_exit, false).
+
+exit_normal_test() ->
+    Options = [{user, ?user}, {password, ?password}],
+    {ok, Pid} = mysql:start_link(Options),
+    {ok, ok, LoggedErrors} = error_logger_acc:capture(fun () ->
+        %% Stop the connection without noise, errors or messages
+        mysql:stop(Pid),
+        receive
+            UnexpectedExitMessage -> UnexpectedExitMessage
+        after 0 ->
+            ok
+        end
+    end),
+    %% Check that we got nothing in the error log.
+    ?assertEqual([], LoggedErrors).
 
 server_disconnect_test() ->
     process_flag(trap_exit, true),
@@ -156,7 +171,62 @@ keep_alive_test() ->
      ExpectedPrefix = io_lib:format("** Generic server ~p terminating", [Pid]),
      ?assert(lists:prefix(lists:flatten(ExpectedPrefix), LoggedMsg)),
      ?assertMatch({crash_report, _}, LoggedReport),
-     exit(Pid, normal).
+     ?assertExit(noproc, mysql:stop(Pid)).
+
+unix_socket_test() ->
+    try
+        list_to_integer(erlang:system_info(otp_release))
+    of
+        %% Supported in OTP >= 19
+        OtpRelease when OtpRelease >= 19 ->
+            %% Get socket file to use
+            {ok, Pid1} = mysql:start_link([{user, ?user},
+                                           {password, ?password}]),
+            {ok, [<<"@@socket">>], [SockFile]} = mysql:query(Pid1,
+                                                             "SELECT @@socket"),
+            mysql:stop(Pid1),
+            %% Connect through unix socket
+            case mysql:start_link([{host, {local, SockFile}},
+                                   {user, ?user}, {password, ?password}]) of
+                {ok, Pid2} ->
+                    ?assertEqual({ok, [<<"1">>], [[1]]},
+                                 mysql:query(Pid2, <<"SELECT 1">>)),
+                    mysql:stop(Pid2);
+                {error, eafnosupport} ->
+                    error_logger:info_msg("Skipping unix socket test. "
+                                          "Not supported on this OS.~n")
+            end;
+        OtpRelease ->
+            error_logger:info_msg("Skipping unix socket test. Current OTP "
+                                  "release is ~B. Required release is >= 19.~n",
+                                  [OtpRelease])
+    catch
+        error:badarg ->
+            error_logger:info_msg("Skipping unix socket tests. Current OTP "
+                                  "release could not be determined.~n")
+    end.
+    
+connect_queries_failure_test() ->
+    process_flag(trap_exit, true),
+    {error, Reason} = mysql:start_link([{user, ?user}, {password, ?password},
+                                        {queries, ["foo"]}]),
+    receive
+        {'EXIT', _Pid, Reason} -> ok
+    after 1000 ->
+        exit(no_exit_message)
+    end,
+    process_flag(trap_exit, false).
+
+connect_prepare_failure_test() ->
+    process_flag(trap_exit, true),
+    {error, Reason} = mysql:start_link([{user, ?user}, {password, ?password},
+                                        {prepare, [{foo, "foo"}]}]),
+    receive
+        {'EXIT', _Pid, Reason} -> ok
+    after 1000 ->
+        exit(no_exit_message)
+    end,
+    process_flag(trap_exit, false).
 
 %% For R16B where sys:get_state/1 is not available.
 get_state(Process) ->
@@ -178,13 +248,14 @@ query_test_() ->
      end,
      fun (Pid) ->
          ok = mysql:query(Pid, <<"DROP DATABASE otptest">>),
-         exit(Pid, normal)
+         mysql:stop(Pid)
      end,
      fun (Pid) ->
          [{"Select db on connect", fun () -> connect_with_db(Pid) end},
           {"Autocommit",           fun () -> autocommit(Pid) end},
           {"Encode",               fun () -> encode(Pid) end},
           {"Basic queries",        fun () -> basic_queries(Pid) end},
+          {"Filtermap queries",    fun () -> filtermap_queries(Pid) end},
           {"FOUND_ROWS option",    fun () -> found_rows(Pid) end},
           {"Multi statements",     fun () -> multi_statements(Pid) end},
           {"Text protocol",        fun () -> text_protocol(Pid) end},
@@ -197,7 +268,8 @@ query_test_() ->
           {"TIME",                 fun () -> time(Pid) end},
           {"DATETIME",             fun () -> datetime(Pid) end},
           {"JSON",                 fun () -> json(Pid) end},
-          {"Microseconds",         fun () -> microseconds(Pid) end}]
+          {"Microseconds",         fun () -> microseconds(Pid) end},
+          {"Invalid params",       fun () -> invalid_params(Pid) end}]
      end}.
 
 connect_with_db(_Pid) ->
@@ -206,7 +278,7 @@ connect_with_db(_Pid) ->
                                   {database, "otptest"}]),
     ?assertMatch({ok, _, [[<<"otptest">>]]},
                  mysql:query(Pid, "SELECT DATABASE()")),
-    exit(Pid, normal).
+    mysql:stop(Pid).
 
 log_warnings_test() ->
     {ok, Pid} = mysql:start_link([{user, ?user}, {password, ?password}]),
@@ -228,7 +300,7 @@ log_warnings_test() ->
                  " in INSeRT INtO foo () VaLUeS ()\n", Log2),
     ?assertEqual("Warning 1364: Field 'x' doesn't have a default value\n"
                  " in INSERT INTO foo () VALUES ()\n", Log3),
-    exit(Pid, normal).
+    mysql:stop(Pid).
 
 autocommit(Pid) ->
     ?assert(mysql:autocommit(Pid)),
@@ -263,6 +335,53 @@ basic_queries(Pid) ->
                  mysql:query(Pid, <<"SELECT 42 AS i, 'foo' AS s;">>)),
 
     ok.
+
+filtermap_queries(Pid) ->
+    ok = mysql:query(Pid, ?create_table_t),
+    ok = mysql:query(Pid, <<"INSERT INTO t (id, tx) VALUES (1, 'text 1')">>),
+    ok = mysql:query(Pid, <<"INSERT INTO t (id, tx) VALUES (2, 'text 2')">>),
+    ok = mysql:query(Pid, <<"INSERT INTO t (id, tx) VALUES (3, 'text 3')">>),
+
+    Query = <<"SELECT id, tx FROM t ORDER BY id">>,
+
+    %% one-ary filtermap fun
+    FilterMap1 = fun
+        ([1|_]) ->
+            true;
+        ([2|_]) ->
+            false;
+        (Row1=[3|_]) ->
+            {true, list_to_tuple(Row1)}
+    end,
+
+    %% two-ary filtermap fun
+    FilterMap2 = fun
+        (_, Row2) ->
+            FilterMap1(Row2)
+    end,
+
+    Expected = [[1, <<"text 1">>], {3, <<"text 3">>}],
+
+    %% test with plain query
+    {ok, _, Rows1}=mysql:query(Pid, Query, FilterMap1),
+    ?assertEqual(Expected, Rows1),
+    {ok, _, Rows2}=mysql:query(Pid, Query, FilterMap2),
+    ?assertEqual(Expected, Rows2),
+
+    %% test with parameterized query
+    {ok, _, Rows3}=mysql:query(Pid, Query, [], FilterMap1),
+    ?assertEqual(Expected, Rows3),
+    {ok, _, Rows4}=mysql:query(Pid, Query, [], FilterMap2),
+    ?assertEqual(Expected, Rows4),
+
+    %% test with prepared statement
+    {ok, PrepStmt} = mysql:prepare(Pid, Query),
+    {ok, _, Rows5}=mysql:execute(Pid, PrepStmt, [], FilterMap1),
+    ?assertEqual(Expected, Rows5),
+    {ok, _, Rows6}=mysql:execute(Pid, PrepStmt, [], FilterMap2),
+    ?assertEqual(Expected, Rows6),
+
+    ok = mysql:query(Pid, <<"DROP TABLE t">>).
 
 found_rows(Pid) ->
     Options = [{user, ?user}, {password, ?password}, {log_warnings, false},
@@ -621,6 +740,12 @@ test_datetime_microseconds(Pid) ->
                            <<"dt">>),
     ok = mysql:query(Pid, "DROP TABLE dt").
 
+invalid_params(Pid) ->
+    {ok, StmtId} = mysql:prepare(Pid, "SELECT ?"),
+    ?assertError(badarg, mysql:execute(Pid, StmtId, [x])),
+    ?assertError(badarg, mysql:query(Pid, "SELECT ?", [x])),
+    ok = mysql:unprepare(Pid, StmtId).
+
 %% @doc Tests write and read in text and the binary protocol, all combinations.
 %% This helper function assumes an empty table with a single column.
 write_read_text_binary(Conn, Term, SqlLiteral, Table, Column) ->
@@ -659,7 +784,7 @@ timeout_test_() ->
          Pid
      end,
      fun (Pid) ->
-         exit(Pid, normal)
+         mysql:stop(Pid)
      end,
      {with, [fun (Pid) ->
                  %% SLEEP was added in MySQL 5.0.12
@@ -699,7 +824,7 @@ with_table_foo_test_() ->
      end,
      fun (Pid) ->
          ok = mysql:query(Pid, <<"DROP DATABASE otptest">>),
-         exit(Pid, normal)
+         mysql:stop(Pid)
      end,
      fun (Pid) ->
          [{"Prepared statements", fun () -> prepared_statements(Pid) end},
@@ -738,14 +863,14 @@ parameterized_query(Conn) ->
     {ok, _, []} = mysql:query(Conn, "SELECT * FROM foo WHERE bar = ?", [2]),
     receive after 150 -> ok end, %% Now the query cache should emptied
     {ok, _, []} = mysql:query(Conn, "SELECT * FROM foo WHERE bar = ?", [3]),
-    {error, {_, _, _}} = mysql:query(Conn, "Lorem ipsum dolor sit amet", [x]).
+    {error, {_, _, _}} = mysql:query(Conn, "Lorem ipsum dolor sit amet", [4]).
 
 %% --- simple gen_server callbacks ---
 
 gen_server_coverage_test() ->
-    {noreply, state} = mysql:handle_cast(foo, state),
-    {noreply, state} = mysql:handle_info(foo, state),
-    ok = mysql:terminate(kill, state).
+    {noreply, state} = mysql_conn:handle_cast(foo, state),
+    {noreply, state} = mysql_conn:handle_info(foo, state),
+    ok = mysql_conn:terminate(kill, state).
 
 %% --- Utility functions
 db_version_string(Pid) ->
